@@ -64,7 +64,14 @@ void ASurvivalCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	PerformInteractionCheck();
+	const bool bIsInteractinOnServer = (HasAuthority() && IsInteracting());
+
+	// 매프레임 마다 라인트레이싱 안하게 
+	if ((!HasAuthority() || bIsInteractinOnServer) && GetWorld()->TimeSince(InteractionData.LastInteractionCheckTime) > InteractionCheckFrequency)
+	{
+		PerformInteractionCheck();
+	}
+
 }
 
 void ASurvivalCharacter::PerformInteractionCheck()
@@ -115,25 +122,119 @@ void ASurvivalCharacter::PerformInteractionCheck()
 
 void ASurvivalCharacter::CouldntFindInteractable()
 {
+	if (GetWorldTimerManager().IsTimerActive(TimerHandle_Interact))
+	{
+		GetWorldTimerManager().ClearTimer(TimerHandle_Interact);
+	}
+
+	if (UInteractionComponent* Interactable = GetInteractable())
+	{
+		Interactable->EndFocus(this);
+
+		if (InteractionData.bInteractHeld)
+		{
+			EndInteract();
+		}
+	}
+
+	InteractionData.ViewedInteractionComponent = nullptr;
 }
 
 void ASurvivalCharacter::FoundNewInteractable(UInteractionComponent* Interactable)
 {
-	UE_LOG(LogTemp, Warning, TEXT("We found an interactable"));
+	EndInteract(); // 기존에 활성화 된거 있을수 있으니 끄기
+
+	if (UInteractionComponent* OldInteractable = GetInteractable()) // 기존 구조체에 들어가 있는 것
+	{
+		OldInteractable->EndFocus(this);
+	}
+
+	InteractionData.ViewedInteractionComponent = Interactable;
+	Interactable->BeginFocus(this); //
 }
 
 
 
 void ASurvivalCharacter::BeginInteract()
 {
+	if (!HasAuthority()) //HasAuthority 서버인지 아닌지 판정
+	{
+		ServerBeginInteract();
+	}
+
+	InteractionData.bInteractHeld = true;
+
+	if (UInteractionComponent* Interactable = GetInteractable())
+	{
+		Interactable->BeginInteract(this);
+
+		if (FMath::IsNearlyZero(Interactable->InteractionTime))
+		{
+			Interact();
+		}
+		else
+		{
+			GetWorldTimerManager().SetTimer(TimerHandle_Interact, this, &ASurvivalCharacter::Interact, Interactable->InteractionTime, false);
+		}
+	}
 }
 
 void ASurvivalCharacter::EndInteract()
 {
+	if (!HasAuthority()) //HasAuthority 서버인지 아닌지 판정
+	{
+		ServerEndInteract();
+	}
+
+	InteractionData.bInteractHeld = false;
+
+	GetWorldTimerManager().ClearTimer(TimerHandle_Interact);
+
+	if (UInteractionComponent* Interactable = GetInteractable())
+	{
+		Interactable->EndInteract(this);
+	}
+}
+
+void ASurvivalCharacter::ServerBeginInteract_Implementation()
+{
+	BeginInteract();
+}
+
+bool ASurvivalCharacter::ServerBeginInteract_Validate()
+{
+	return true;
+}
+
+
+void ASurvivalCharacter::ServerEndInteract_Implementation()
+{
+	EndInteract();
+}
+
+bool ASurvivalCharacter::ServerEndInteract_Validate()
+{
+	return true;
 }
 
 void ASurvivalCharacter::Interact()
 {
+	GetWorldTimerManager().ClearTimer(TimerHandle_Interact);
+
+	if (UInteractionComponent* Interactable = GetInteractable())
+	{
+		Interactable->Interact(this);
+	}
+}
+
+bool ASurvivalCharacter::IsInteracting() const
+{
+	return GetWorldTimerManager().IsTimerActive(TimerHandle_Interact);
+}
+
+float ASurvivalCharacter::GetRemainingInteractTime() const
+{
+	return GetWorldTimerManager().GetTimerRemaining(TimerHandle_Interact);
 }
 
 void ASurvivalCharacter::MoveForward(float Val)
@@ -184,15 +285,19 @@ void ASurvivalCharacter::StopCrouching()
 void ASurvivalCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
+	PlayerInputComponent->BindAction("Jump", EInputEvent::IE_Pressed, this, &ACharacter::Jump);
+	PlayerInputComponent->BindAction("Jump", EInputEvent::IE_Released, this, &ACharacter::StopJumping);
+
+	PlayerInputComponent->BindAction("Courch", EInputEvent::IE_Pressed, this, &ASurvivalCharacter::StartCrouching);
+	PlayerInputComponent->BindAction("Courch", EInputEvent::IE_Released, this, &ASurvivalCharacter::StopCrouching);
+
+	PlayerInputComponent->BindAction("Interact", EInputEvent::IE_Pressed, this, &ASurvivalCharacter::BeginInteract);
+	PlayerInputComponent->BindAction("Interact", EInputEvent::IE_Released, this, &ASurvivalCharacter::EndInteract);
+
+
 	PlayerInputComponent->BindAxis("MoveForward", this, &ASurvivalCharacter::MoveForward);
 	PlayerInputComponent->BindAxis("MoveRight", this, &ASurvivalCharacter::MoveRight);
 	PlayerInputComponent->BindAxis("LookUp", this, &ASurvivalCharacter::LookUp);
 	PlayerInputComponent->BindAxis("Turn", this, &ASurvivalCharacter::Turn);
-
-	PlayerInputComponent->BindAction("Jump", EInputEvent::IE_Pressed, this, &ACharacter::Jump);
-	PlayerInputComponent->BindAction("Jump", EInputEvent::IE_Released, this, &ACharacter::StopJumping);
-	PlayerInputComponent->BindAction("Courch", EInputEvent::IE_Pressed, this, &ASurvivalCharacter::StartCrouching);
-	PlayerInputComponent->BindAction("Courch", EInputEvent::IE_Released, this, &ASurvivalCharacter::StopCrouching);
-
 }
 

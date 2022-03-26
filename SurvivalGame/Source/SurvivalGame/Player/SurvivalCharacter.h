@@ -83,12 +83,28 @@ protected:
 	void BeginInteract();
 	void EndInteract();
 
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerBeginInteract();
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerEndInteract();
+
 	void Interact();
 
 	UPROPERTY()
 	FInteractionData InteractionData; // 상호작용관련된 구조체
 
 	FORCEINLINE UInteractionComponent* GetInteractable() const { return InteractionData.ViewedInteractionComponent; }
+
+	FTimerHandle TimerHandle_Interact;
+
+public:
+
+	bool IsInteracting() const;
+
+	float GetRemainingInteractTime() const;
+
+protected:
 	///////////////
 
 	void MoveForward(float Val);
